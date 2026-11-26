@@ -2,22 +2,26 @@
 // fixed 1/60 s steps, and the renderer paints what is there. The game moves
 // between four screens: title, play, paused and game over.
 //
-// ?seed=N fixes the island and ring layout. ?shot=start|play|cockpit|end
+// ?seed=N fixes the island and bandit layout. ?shot=start|play|cockpit|end
 // (with &seed=N) stages that scene instead of running the loop, paints it
 // twice and sets window.__shotReady for a screenshot.
 import { BEST_KEY, STEP } from './config.js';
 import { createRandom } from './random.js';
 import {
   createWorld,
-  EVENT_COURSE_DONE,
   EVENT_CRASHED,
   EVENT_FUEL_LOW,
+  EVENT_KILL,
   EVENT_LANDED,
-  EVENT_RING,
+  EVENT_LOCK,
+  EVENT_PLAYER_HIT,
+  EVENT_ROCKET,
+  EVENT_WAVE_CLEAR,
 } from './world.js';
 import { ACTION_CAMERA, ACTION_CONFIRM, ACTION_MUTE, ACTION_PAUSE, createInput } from './input.js';
 import { createAudio } from './audio.js';
 import { createRenderer } from './render.js';
+import { createCombat } from './combat.js';
 import { createHud } from './hud.js';
 import { stageShot } from './shots.js';
 
@@ -39,9 +43,14 @@ const overStats = document.getElementById('over-stats');
 const titleBest = document.getElementById('title-best');
 
 const renderer = createRenderer(canvas, seed);
-const world = createWorld(createRandom(seed), renderer.terrain.groundHeight);
+const combat = createCombat(renderer.scene, renderer.terrain.groundHeight);
+const world = createWorld(createRandom(seed), renderer.terrain.groundHeight, combat);
 const hud = createHud();
 const audio = createAudio();
+
+// A handle for headless play-tests: the state, the world and the combat
+// system, so a script can drive the game and read what happened.
+window.__game = { world, combat, renderer, hud };
 
 function readBest() {
   try {
@@ -68,7 +77,7 @@ function showOnly(screen) {
 }
 
 function runShot(name) {
-  const staged = stageShot(name, world, renderer, hud);
+  const staged = stageShot(name, world, renderer, hud, combat);
   const best = staged.best || 0;
   showOnly(staged.screen);
   // Screenshots always show the instruments: the judge's first criterion
@@ -77,12 +86,12 @@ function runShot(name) {
   titleBest.textContent = `BEST ${best}`;
   overScore.textContent = String(world.state.score);
   overBest.textContent = `BEST ${best}`;
-  overStats.textContent = `RINGS ${world.state.ringsHit} · LANDINGS ${world.state.landings} · COURSE ${world.state.course}`;
-  hud.update(world.state);
-  renderer.draw(world, world.state.time, true);
+  overStats.textContent = `WAVE ${world.state.wave} · KILLS ${world.state.kills} · BANDITS DOWN ${world.state.kills}`;
+  hud.update(world.state, world, renderer);
+  renderer.draw(world, world.state.time, true, combat);
   let painted = 0;
   function paint() {
-    renderer.draw(world, world.state.time);
+    renderer.draw(world, world.state.time, false, combat);
     painted += 1;
     if (painted < 2) requestAnimationFrame(paint);
     else window.__shotReady = true;
@@ -97,10 +106,11 @@ function runGame() {
   let accumulator = 0;
   let last = performance.now();
   let time = 0;
+  let gunSoundTimer = 0;
 
   titleBest.textContent = `BEST ${best}`;
   showOnly('title');
-  status.textContent = 'Langit Nusantara. Press Space or click to fly.';
+  status.textContent = 'Langit Nusantara — Jet Tempur. Press Space or click to fly.';
 
   function announce(message) {
     status.textContent = message;
@@ -112,7 +122,7 @@ function runGame() {
     accumulator = 0;
     screen = 'play';
     showOnly('play');
-    announce('Flying. Follow the green ring.');
+    announce('Flying. Bandits inbound — Space fires the gun, F launches a rocket.');
   }
 
   function endGame() {
@@ -123,7 +133,7 @@ function runGame() {
     }
     overScore.textContent = String(world.state.score);
     overBest.textContent = `BEST ${best}`;
-    overStats.textContent = `RINGS ${world.state.ringsHit} · LANDINGS ${world.state.landings} · COURSE ${world.state.course} · ${world.state.crashReason}`;
+    overStats.textContent = `WAVE ${world.state.wave} · KILLS ${world.state.kills} · ${world.state.crashReason}`;
     showOnly('over');
     announce(`Flight over. Score ${world.state.score}. Best ${best}.`);
   }
@@ -151,14 +161,29 @@ function runGame() {
 
   function step() {
     const events = world.step(STEP, input);
-    if (events & EVENT_RING) audio.ring();
+    if (events & EVENT_KILL) audio.explosion();
+    if (events & EVENT_WAVE_CLEAR) audio.landing();
     if (events & EVENT_LANDED) audio.landing();
     if (events & EVENT_FUEL_LOW) audio.warning();
+    if (events & EVENT_ROCKET) audio.rocket();
+    if (events & EVENT_LOCK) audio.lock(true);
+    if (events & EVENT_PLAYER_HIT) audio.hit();
     if (events & EVENT_CRASHED) {
       audio.crash();
       endGame();
     }
-    if (events & EVENT_COURSE_DONE) announce('Course clear — land on the runway.');
+    // Gun sound while the trigger is held and the gun is not overheated.
+    if (input.fire() && !world.state.gunOverheated && world.state.alive) {
+      gunSoundTimer -= STEP;
+      if (gunSoundTimer <= 0) {
+        audio.gun();
+        gunSoundTimer = 1 / 12;
+      }
+    }
+    // Lock tone while tracking: solid when locked, slow while acquiring.
+    if (world.state.lockTarget && world.state.lockTarget.state.alive && world.state.alive) {
+      audio.lock(world.state.locked);
+    }
   }
 
   function frame(now) {
@@ -168,22 +193,22 @@ function runGame() {
     time += dt;
     handleActions();
     if (screen === 'title') {
-      // The title screen idles over the runway: the plane sits, the world
+      // The title screen idles over the runway: the jet sits, the world
       // breathes, the camera holds.
-      renderer.draw(world, time);
-      hud.update(world.state);
+      renderer.draw(world, time, false, combat);
+      hud.update(world.state, world, renderer);
     } else if (screen === 'play') {
       accumulator += dt;
       while (accumulator >= STEP && screen === 'play') {
         step();
         accumulator -= STEP;
       }
-      audio.update(world.state.throttle, world.state.speed, true);
-      renderer.draw(world, time);
-      hud.update(world.state);
+      audio.update(world.state.throttle, world.state.speed, true, world.state.afterburner);
+      renderer.draw(world, time, false, combat);
+      hud.update(world.state, world, renderer);
     } else {
       audio.update(0, 0, false);
-      renderer.draw(world, time);
+      renderer.draw(world, time, false, combat);
       accumulator = 0;
     }
   }

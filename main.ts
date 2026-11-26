@@ -1,4 +1,4 @@
-// Langit Nusantara — Island Hopper: a best-flight-game-20261126-0057 entry
+// Langit Nusantara — Jet Tempur: a best-flight-game-20261126-0057 entry
 // (Node 22, standard library only). The game is plain static files under
 // game/ (game/index.html and its ES modules, three.js vendored), and this
 // program hands it in: it copies game/ and screenshots/ from beside this

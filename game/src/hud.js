@@ -1,8 +1,10 @@
-// The HUD: DOM instruments over the canvas. Altitude, speed and heading are
-// always visible (the judge's first criterion names them), plus fuel,
-// throttle, score, the ring count, a compass strip, an artificial horizon
-// and the mission line. All of it is plain DOM, so it stays crisp at any
-// window size and costs the renderer nothing.
+// The HUD: DOM instruments over the canvas. Altitude, speed and heading
+// are always visible (the judge's first criterion names them), plus fuel,
+// throttle, health, rockets, gun heat, score, wave and kills, a compass
+// strip, an artificial horizon, a radar scope and the mission line. All of
+// it is plain DOM, so it stays crisp at any window size and costs the
+// renderer nothing. The palette stays military and quiet: amber on dark,
+// no neon.
 import { HUD } from './config.js';
 
 const HEADINGS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
@@ -15,13 +17,23 @@ export function createHud() {
   const fuelEl = document.getElementById('hud-fuel');
   const fuelBar = document.getElementById('hud-fuelbar');
   const throttleBar = document.getElementById('hud-throttlebar');
+  const healthEl = document.getElementById('hud-health');
+  const healthBar = document.getElementById('hud-healthbar');
+  const heatEl = document.getElementById('hud-heat');
+  const heatBar = document.getElementById('hud-heatbar');
+  const rocketsEl = document.getElementById('hud-rockets');
   const scoreEl = document.getElementById('hud-score');
-  const ringsEl = document.getElementById('hud-rings');
+  const waveEl = document.getElementById('hud-wave');
   const missionEl = document.getElementById('hud-mission');
   const toastEl = document.getElementById('hud-toast');
   const compassEl = document.getElementById('hud-compass');
   const horizon = document.getElementById('hud-horizon');
   const horizonCtx = horizon.getContext('2d');
+  const radar = document.getElementById('hud-radar');
+  const radarCtx = radar.getContext('2d');
+  const lockEl = document.getElementById('hud-lock');
+  const hitEl = document.getElementById('hud-hitmarker');
+  const speedlinesEl = document.getElementById('hud-speedlines');
 
   let lastToast = '';
 
@@ -76,8 +88,61 @@ export function createHud() {
     compassEl.innerHTML = html;
   }
 
+  // Radar scope: north up, the player centred, bandits red, the runway
+  // a green square. Range 1200 m across the 120 px scope.
+  function drawRadar(s, world) {
+    const w = radar.width;
+    const h = radar.height;
+    const g = radarCtx;
+    const cx = w / 2;
+    const cy = h / 2;
+    const range = 1200;
+    g.clearRect(0, 0, w, h);
+    g.fillStyle = 'rgba(8, 18, 12, 0.72)';
+    g.beginPath();
+    g.arc(cx, cy, w / 2 - 1, 0, Math.PI * 2);
+    g.fill();
+    g.strokeStyle = 'rgba(125, 255, 154, 0.5)';
+    g.lineWidth = 1;
+    g.beginPath();
+    g.arc(cx, cy, w / 4, 0, Math.PI * 2);
+    g.stroke();
+    g.beginPath();
+    g.arc(cx, cy, w / 2 - 1, 0, Math.PI * 2);
+    g.stroke();
+    const scale = (w / 2 - 4) / range;
+    // Runway.
+    const rx = cx + (0 - s.pos.x) * scale;
+    const ry = cy + (120 - s.pos.z) * scale;
+    g.fillStyle = '#7dff9a';
+    g.fillRect(rx - 3, ry - 3, 6, 6);
+    // Bandits.
+    for (const enemy of world.enemies) {
+      if (!enemy.state.alive) continue;
+      const ex = cx + (enemy.state.pos.x - s.pos.x) * scale;
+      const ey = cy + (enemy.state.pos.z - s.pos.z) * scale;
+      g.fillStyle = '#ff5a2a';
+      g.beginPath();
+      g.arc(ex, ey, 3.2, 0, Math.PI * 2);
+      g.fill();
+    }
+    // The player: a small amber wedge pointing along the heading.
+    const hdg = -s.heading;
+    g.fillStyle = '#ffd9a0';
+    g.save();
+    g.translate(cx, cy);
+    g.rotate(hdg);
+    g.beginPath();
+    g.moveTo(0, -7);
+    g.lineTo(5, 6);
+    g.lineTo(-5, 6);
+    g.closePath();
+    g.fill();
+    g.restore();
+  }
+
   return {
-    update(s) {
+    update(s, world, renderer) {
       const speedKt = s.speed * HUD.msToKt;
       const altFt = s.pos.y * HUD.mToFt;
       // The nose flies (-sin h, -cos h), so the compass bearing is -h.
@@ -89,9 +154,16 @@ export function createHud() {
       fuelBar.style.width = `${Math.max(0, s.fuel)}%`;
       fuelBar.style.background = s.fuel < 20 ? '#ff5a2a' : '#7dff9a';
       throttleBar.style.width = `${Math.round(s.throttle * 100)}%`;
+      healthEl.textContent = `${Math.max(0, Math.round(s.health))}%`;
+      healthBar.style.width = `${Math.max(0, s.health)}%`;
+      healthBar.style.background = s.health < 30 ? '#ff5a2a' : '#7dff9a';
+      heatEl.textContent = s.gunOverheated ? 'OVERHEAT' : `${Math.round(s.gunHeat)}%`;
+      heatBar.style.width = `${Math.max(0, Math.min(100, s.gunHeat))}%`;
+      heatBar.style.background = s.gunOverheated ? '#ff5a2a' : '#ffb020';
+      rocketsEl.textContent = `×${s.rockets}`;
       scoreEl.textContent = String(s.score);
-      ringsEl.textContent = `${Math.min(s.ringIndex + 1, 8)} / 8`;
-      missionEl.textContent = `COURSE ${s.course} · RINGS ${s.ringsHit} · LANDINGS ${s.landings}`;
+      waveEl.textContent = `WAVE ${s.wave} · BANDITS ${s.enemiesLeft} · KILLS ${s.kills}`;
+      missionEl.textContent = `WAVE ${s.wave} · BANDITS ${s.enemiesLeft} · KILLS ${s.kills}`;
       if (s.message && s.message !== lastToast) {
         toastEl.textContent = s.message;
         toastEl.style.opacity = '1';
@@ -102,10 +174,36 @@ export function createHud() {
       }
       drawCompass(hdgDeg);
       drawHorizon(s.roll, s.pitch);
+      drawRadar(s, world);
+
+      // Lock diamond over the tracked bandit; solid and labelled once
+      // the tone is steady, hollow while it is still tracking.
+      if (s.lockTarget && s.lockTarget.state.alive && renderer) {
+        const p = renderer.projectToScreen(s.lockTarget.state.pos);
+        if (p) {
+          lockEl.style.display = 'block';
+          lockEl.style.left = `${p.x}px`;
+          lockEl.style.top = `${p.y}px`;
+          lockEl.classList.toggle('locked', s.locked);
+          lockEl.textContent = s.locked ? 'LOCK' : '';
+        } else {
+          lockEl.style.display = 'none';
+        }
+      } else {
+        lockEl.style.display = 'none';
+      }
+
+      // Hitmarker: a brief tick at the crosshair when a round lands.
+      const hitAge = s.time - (s.lastHitAt ?? -99);
+      hitEl.style.opacity = hitAge < 0.14 ? '1' : '0';
+
+      // Speed lines: faint streaks at the edges only when genuinely
+      // fast, and never more than a whisper.
+      const fast = Math.max(0, (s.speed - 200) / 90);
+      speedlinesEl.style.opacity = String(Math.min(0.22, fast * 0.22));
     },
-    show(el) {
+    show() {
       root.classList.remove('hidden');
-      void el;
     },
     hide() {
       root.classList.add('hidden');

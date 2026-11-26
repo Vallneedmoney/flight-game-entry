@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Langit Nusantara — Island Hopper</title>
+<title>Langit Nusantara — Jet Tempur</title>
 <style>
   html, body { margin: 0; height: 100%; overflow: hidden; background: #1a2b3d; font-family: 'Segoe UI', system-ui, sans-serif; }
   #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
@@ -18,7 +18,7 @@
   #hud-speedbox { top: 14px; left: 14px; min-width: 110px; }
   #hud-altbox { top: 14px; left: 150px; min-width: 110px; }
   #hud-hdgbox { top: 14px; left: 286px; min-width: 130px; }
-  #hud-scorebox { top: 14px; right: 14px; text-align: right; min-width: 130px; }
+  #hud-scorebox { top: 14px; right: 14px; text-align: right; min-width: 150px; }
   #hud-compass { position: absolute; top: 86px; left: 50%; transform: translateX(-50%); width: 340px; height: 26px; overflow: hidden; background: rgba(8, 14, 22, 0.55); border: 1px solid rgba(255, 176, 32, 0.45); border-radius: 13px; }
   #hud-compass span { position: absolute; top: 4px; transform: translateX(-50%); font-family: Consolas, monospace; font-size: 13px; color: #d8e8f0; }
   #hud-compass::after { content: ''; position: absolute; left: 50%; top: 0; bottom: 0; width: 2px; background: #ffb020; transform: translateX(-50%); }
@@ -31,7 +31,27 @@
   .hud-bar > div { height: 100%; border-radius: 5px; transition: width 0.2s; }
   #hud-fuelbar { background: #7dff9a; }
   #hud-throttlebar { background: #ffb020; }
-  #hud-help { position: absolute; right: 14px; bottom: 14px; font-size: 11px; color: #d8e8f0; background: rgba(8, 14, 22, 0.5); padding: 6px 10px; border-radius: 8px; text-align: right; line-height: 1.5; }
+  #hud-healthbar { background: #7dff9a; }
+  #hud-heatbar { background: #ffb020; }
+  #hud-right { position: absolute; right: 14px; bottom: 14px; display: flex; gap: 12px; align-items: flex-end; }
+  #hud-radar { border: 1px solid rgba(125, 255, 154, 0.45); border-radius: 50%; background: rgba(8, 18, 12, 0.55); }
+  #hud-help { font-size: 11px; color: #d8e8f0; background: rgba(8, 14, 22, 0.5); padding: 6px 10px; border-radius: 8px; text-align: right; line-height: 1.5; }
+  /* Crosshair, lock diamond and hitmarker sit at the screen centre. */
+  #hud-crosshair { position: absolute; left: 50%; top: 50%; width: 26px; height: 26px; margin: -13px 0 0 -13px; border: 1px solid rgba(255, 217, 160, 0.8); border-radius: 50%; }
+  #hud-crosshair::after { content: ''; position: absolute; left: 50%; top: 50%; width: 3px; height: 3px; margin: -1.5px 0 0 -1.5px; background: #ffd9a0; border-radius: 50%; }
+  #hud-lock { position: absolute; width: 44px; height: 44px; margin: -22px 0 0 -22px; border: 2px solid rgba(255, 217, 160, 0.7); transform: rotate(45deg); display: none; }
+  #hud-lock.locked { border-color: #ff5a2a; }
+  #hud-lock.locked::after { content: 'LOCK'; position: absolute; left: 50%; top: 50%; transform: rotate(-45deg) translate(-50%, -50%); transform-origin: 0 0; font-size: 10px; letter-spacing: 1px; color: #ff5a2a; font-weight: 700; }
+  #hud-hitmarker { position: absolute; left: 50%; top: 50%; width: 34px; height: 34px; margin: -17px 0 0 -17px; opacity: 0; transition: opacity 0.08s; }
+  #hud-hitmarker::before, #hud-hitmarker::after { content: ''; position: absolute; left: 0; top: 0; width: 100%; height: 100%; background: linear-gradient(#ffe9b0, #ffe9b0) center/100% 2px no-repeat, linear-gradient(#ffe9b0, #ffe9b0) center/2px 100% no-repeat; transform: rotate(45deg); }
+  /* Speed lines: faint streaks at the edges when genuinely fast. */
+  #hud-speedlines { position: absolute; inset: 0; opacity: 0; background:
+    linear-gradient(90deg, rgba(255,255,255,0.5) 0, transparent 90px) left center/90px 2px no-repeat,
+    linear-gradient(270deg, rgba(255,255,255,0.5) 0, transparent 90px) right center/90px 2px no-repeat,
+    linear-gradient(90deg, rgba(255,255,255,0.4) 0, transparent 70px) left 30%/70px 2px no-repeat,
+    linear-gradient(270deg, rgba(255,255,255,0.4) 0, transparent 70px) right 30%/70px 2px no-repeat,
+    linear-gradient(90deg, rgba(255,255,255,0.4) 0, transparent 70px) left 70%/70px 2px no-repeat,
+    linear-gradient(270deg, rgba(255,255,255,0.4) 0, transparent 70px) right 70%/70px 2px no-repeat; }
 
   /* ---- Screens ---- */
   .screen { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 10; color: #fff; text-align: center; background: radial-gradient(ellipse at center, rgba(8, 14, 22, 0.25) 0%, rgba(8, 14, 22, 0.72) 100%); }
@@ -48,31 +68,44 @@
 </script>
 </head>
 <body>
-<canvas id="game" aria-label="Langit Nusantara: fly a bush plane over Indonesian islands, through rings, and land on the runway"></canvas>
+<canvas id="game" aria-label="Langit Nusantara Jet Tempur: fly a jet fighter over Indonesian islands, splash bandits with the gun and lock-on rockets"></canvas>
 <p id="status" role="status" aria-live="polite"></p>
 
 <div id="hud" class="hidden">
+  <div id="hud-speedlines"></div>
   <div id="hud-speedbox" class="hud-panel"><div class="hud-label">AIRSPEED</div><div class="hud-value" id="hud-speed">0 kt</div></div>
   <div id="hud-altbox" class="hud-panel"><div class="hud-label">ALTITUDE</div><div class="hud-value" id="hud-alt">0 ft</div></div>
   <div id="hud-hdgbox" class="hud-panel"><div class="hud-label">HEADING</div><div class="hud-value" id="hud-hdg">090° E</div></div>
-  <div id="hud-scorebox" class="hud-panel"><div class="hud-label">SCORE</div><div class="hud-value" id="hud-score">0</div><div class="hud-label">RINGS <span id="hud-rings">1 / 8</span></div></div>
+  <div id="hud-scorebox" class="hud-panel"><div class="hud-label">SCORE</div><div class="hud-value" id="hud-score">0</div><div class="hud-label" id="hud-wave">WAVE 1 · BANDITS 3 · KILLS 0</div></div>
   <div id="hud-compass"></div>
-  <div id="hud-mission">COURSE 1 · RINGS 0 · LANDINGS 0</div>
+  <div id="hud-mission">WAVE 1 · BANDITS 3 · KILLS 0</div>
   <div id="hud-toast" style="opacity:0"></div>
+  <div id="hud-crosshair"></div>
+  <div id="hud-lock"></div>
+  <div id="hud-hitmarker"></div>
   <div id="hud-bottom">
     <canvas id="hud-horizon" width="92" height="92"></canvas>
-    <div class="hud-gauge"><div class="hud-label">FUEL <span id="hud-fuel">100%</span></div><div class="hud-bar"><div id="hud-fuelbar" style="width:100%"></div></div><div class="hud-label" style="margin-top:6px">THROTTLE</div><div class="hud-bar"><div id="hud-throttlebar" style="width:35%"></div></div></div>
+    <div class="hud-gauge">
+      <div class="hud-label">FUEL <span id="hud-fuel">100%</span></div><div class="hud-bar"><div id="hud-fuelbar" style="width:100%"></div></div>
+      <div class="hud-label" style="margin-top:6px">THROTTLE</div><div class="hud-bar"><div id="hud-throttlebar" style="width:35%"></div></div>
+      <div class="hud-label" style="margin-top:6px">HULL <span id="hud-health">100%</span></div><div class="hud-bar"><div id="hud-healthbar" style="width:100%"></div></div>
+      <div class="hud-label" style="margin-top:6px">GUN HEAT <span id="hud-heat">0%</span></div><div class="hud-bar"><div id="hud-heatbar" style="width:0%"></div></div>
+    </div>
   </div>
-  <div id="hud-help">Arrows fly · W/S throttle · A/D rudder<br>C camera · P pause · M sound</div>
+  <div id="hud-right">
+    <div class="hud-gauge"><div class="hud-label">ROCKETS <span id="hud-rockets">×6</span></div><div class="hud-label" style="margin-top:6px">HOLD THE BANDIT IN THE<br>DIAMOND TO LOCK · F FIRES</div></div>
+    <canvas id="hud-radar" width="120" height="120"></canvas>
+    <div id="hud-help">Arrows fly · W/S throttle · Shift burner<br>Space / click gun · F / right-click rocket<br>C camera · P pause · M sound</div>
+  </div>
 </div>
 
 <div id="screen-title" class="screen">
   <h1>LANGIT NUSANTARA</h1>
-  <h2>ISLAND HOPPER · A BUSH PILOT'S RUN</h2>
-  <p>Fly the red-and-white island hopper across a golden-hour archipelago.
-  Thread the green rings, watch your fuel, and put her down on the runway
-  to fly the next course.</p>
-  <div class="keys">↑ ↓ pitch &nbsp;·&nbsp; ← → bank &nbsp;·&nbsp; W / S throttle &nbsp;·&nbsp; A / D rudder<br>C chase / cockpit &nbsp;·&nbsp; P pause &nbsp;·&nbsp; M sound</div>
+  <h2>JET TEMPUR · SKADRON NUSANTARA</h2>
+  <p>Fly the grey fighter over a golden-hour archipelago. Bandits are
+  inbound in waves — get on their tail, fire the gun, hold the lock and
+  send a rocket. Land on the runway to refuel, repair and re-arm.</p>
+  <div class="keys">↑ ↓ pitch &nbsp;·&nbsp; ← → bank &nbsp;·&nbsp; W / S throttle &nbsp;·&nbsp; Shift afterburner<br>Space / click machine gun &nbsp;·&nbsp; F / right-click rocket (needs lock)<br>C chase / cockpit &nbsp;·&nbsp; P pause &nbsp;·&nbsp; M sound</div>
   <div class="cta">PRESS SPACE OR CLICK TO FLY</div>
   <p id="title-best" style="margin-top:18px; letter-spacing:2px;">BEST 0</p>
 </div>

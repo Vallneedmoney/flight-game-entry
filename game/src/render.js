@@ -1,11 +1,10 @@
-// The three.js scene: golden-hour light, the terrain, the plane, the rings,
-// and two cameras — a chase camera that never fights the pilot, and a
-// cockpit camera that sits where the pilot sits. The renderer owns no game
-// rules; it only paints what the world says is there.
+// The three.js scene: golden-hour light, the terrain, the jet, the
+// bandits, and two cameras — a chase camera that never fights the pilot,
+// and a cockpit camera that sits where the pilot sits. The renderer owns
+// no game rules; it only paints what the world says is there.
 import * as THREE from 'three';
-import { COURSE } from './config.js';
 import { createTerrain } from './terrain.js';
-import { createPlane } from './plane.js';
+import { createJet } from './jet.js';
 
 export function createRenderer(canvas, seed) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -27,32 +26,8 @@ export function createRenderer(canvas, seed) {
   const terrain = createTerrain(seed);
   scene.add(terrain.group);
 
-  const plane = createPlane();
-  scene.add(plane.group);
-
-  // The rings: glowing torus gates, green for the next one, amber for the
-  // rest, grey once flown. A thin beam marks the next ring's centre.
-  const ringGroup = new THREE.Group();
-  scene.add(ringGroup);
-  const ringMeshes = [];
-  const nextMat = new THREE.MeshBasicMaterial({ color: 0x2aff7a });
-  const laterMat = new THREE.MeshBasicMaterial({ color: 0xffb020 });
-  const doneMat = new THREE.MeshBasicMaterial({ color: 0x8a8f96 });
-  const beamMat = new THREE.MeshBasicMaterial({
-    color: 0x2aff7a,
-    transparent: true,
-    opacity: 0.22,
-  });
-  for (let i = 0; i < COURSE.ringsPerCourse; i++) {
-    const torus = new THREE.Mesh(new THREE.TorusGeometry(COURSE.ringRadius, 0.9, 10, 40), laterMat);
-    const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 60, 8), beamMat);
-    beam.rotation.x = Math.PI / 2;
-    const g = new THREE.Group();
-    g.add(torus);
-    g.add(beam);
-    ringGroup.add(g);
-    ringMeshes.push({ group: g, torus, beam });
-  }
+  const jet = createJet();
+  scene.add(jet.group);
 
   const chaseCam = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.5, 9000);
   const cockpitCam = new THREE.PerspectiveCamera(72, window.innerWidth / window.innerHeight, 0.1, 9000);
@@ -63,6 +38,7 @@ export function createRenderer(canvas, seed) {
   const tmpV = new THREE.Vector3();
   const tmpQ = new THREE.Quaternion();
   const up = new THREE.Vector3(0, 1, 0);
+  let contrailTimer = 0;
 
   function resize() {
     const w = window.innerWidth;
@@ -77,42 +53,55 @@ export function createRenderer(canvas, seed) {
 
   return {
     terrain,
-    plane,
+    jet,
+    scene,
     setCameraMode(mode) {
       cameraMode = mode;
     },
     get cameraMode() {
       return cameraMode;
     },
-    draw(world, time, snap = false) {
+    // Project a world point to screen pixels for HUD markers.
+    projectToScreen(point) {
+      const cam = cameraMode === 'cockpit' ? cockpitCam : chaseCam;
+      tmpV.copy(point).project(cam);
+      if (tmpV.z > 1) return null;
+      return {
+        x: (tmpV.x * 0.5 + 0.5) * window.innerWidth,
+        y: (-tmpV.y * 0.5 + 0.5) * window.innerHeight,
+      };
+    },
+    draw(world, time, snap = false, combat = null) {
       const s = world.state;
       const dt = 1 / 60;
 
-      // The plane mesh follows the model's attitude, banking and pitching
-      // with it; the propeller spins with the throttle.
-      plane.group.position.copy(s.pos);
+      // The jet mesh follows the model's attitude, banking and pitching
+      // with it; the burner glows with the throttle.
+      jet.group.position.copy(s.pos);
       tmpQ.setFromEuler(new THREE.Euler(s.pitch, s.heading, s.roll, 'YXZ'));
-      plane.group.quaternion.copy(tmpQ);
-      plane.update(dt, s.speed, s.throttle, s.pos.y, 0);
+      jet.group.quaternion.copy(tmpQ);
+      jet.update(dt, s.throttle, s.afterburner, time);
 
-      // Rings sit where the world put them; the next one pulses green.
-      const rings = world.rings;
-      for (let i = 0; i < ringMeshes.length; i++) {
-        const data = rings[i];
-        const mesh = ringMeshes[i];
-        if (!data) {
-          mesh.group.visible = false;
-          continue;
+      // Bandit meshes: added to the scene once, hidden when they die.
+      for (const enemy of world.enemies) {
+        if (!enemy.meshAdded) {
+          scene.add(enemy.mesh);
+          enemy.meshAdded = true;
         }
-        mesh.group.visible = true;
-        mesh.group.position.copy(data.pos);
-        mesh.torus.material = data.passed ? doneMat : i === s.ringIndex ? nextMat : laterMat;
-        mesh.beam.visible = i === s.ringIndex;
-        if (i === s.ringIndex) {
-          const pulse = 1 + Math.sin(time * 4) * 0.06;
-          mesh.torus.scale.set(pulse, pulse, pulse);
-        } else {
-          mesh.torus.scale.set(1, 1, 1);
+        enemy.mesh.visible = enemy.state.alive;
+      }
+
+      // Wingtip contrails: thin white puffs when the burner is lit or
+      // the jet is pulling hard, never a wall of smoke.
+      if (combat && s.alive) {
+        contrailTimer -= dt;
+        const pulling = Math.abs(s.roll) > 0.45 || s.afterburner;
+        if (pulling && contrailTimer <= 0) {
+          contrailTimer = 0.055;
+          for (const tip of jet.wingtips) {
+            tmpV.copy(tip).applyQuaternion(jet.group.quaternion).add(s.pos);
+            combat.spawnContrail(tmpV);
+          }
         }
       }
 
@@ -126,8 +115,8 @@ export function createRenderer(canvas, seed) {
       if (cameraMode === 'cockpit') {
         // Just ahead of the nose, high enough that the nose is only a
         // sliver at the bottom of the frame.
-        tmpV.copy(s.pos).addScaledVector(forward, 2.6);
-        tmpV.y += 1.7;
+        tmpV.copy(s.pos).addScaledVector(forward, 3.0);
+        tmpV.y += 1.6;
         cockpitCam.position.copy(tmpV);
         lookAt.copy(s.pos).addScaledVector(forward, 60);
         lookAt.y += 1.2;
@@ -135,8 +124,8 @@ export function createRenderer(canvas, seed) {
         cockpitCam.lookAt(lookAt);
         renderer.render(scene, cockpitCam);
       } else {
-        chaseOffset.copy(forward).multiplyScalar(-22);
-        chaseOffset.y += 9;
+        chaseOffset.copy(forward).multiplyScalar(-34);
+        chaseOffset.y += 12;
         tmpV.copy(s.pos).add(chaseOffset);
         const ground = terrain.groundHeight(tmpV.x, tmpV.z);
         if (tmpV.y < ground + 3) tmpV.y = ground + 3;
@@ -146,7 +135,7 @@ export function createRenderer(canvas, seed) {
         else chaseCam.position.lerp(tmpV, 0.12);
         // Look well ahead and slightly above the nose, so the sightline
         // stays near level and the horizon stays in the frame.
-        lookAt.copy(s.pos).addScaledVector(forward, 60);
+        lookAt.copy(s.pos).addScaledVector(forward, 80);
         lookAt.y += 4;
         chaseCam.up.copy(up);
         chaseCam.lookAt(lookAt);
