@@ -88,7 +88,11 @@ function runShot(name) {
   overBest.textContent = `BEST ${best}`;
   overStats.textContent = `WAVE ${world.state.wave} · KILLS ${world.state.kills} · BANDITS DOWN ${world.state.kills}`;
   hud.update(world.state, world, renderer);
+  // Draw once first so the chase camera snaps to its staged spot: the
+  // lock diamond is projected through that camera, and updating the HUD
+  // before the snap leaves the diamond ~50 px off the bandit.
   renderer.draw(world, world.state.time, true, combat);
+  hud.update(world.state, world, renderer);
   let painted = 0;
   function paint() {
     renderer.draw(world, world.state.time, false, combat);

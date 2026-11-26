@@ -207,6 +207,13 @@ export function createEnemy(random, groundHeight, spawnPos, heading, health) {
       }
       mesh.burnerMat.opacity = 0.25 + Math.sin(time * 31) * 0.08;
     },
+    // Sync the mesh to the staged state without stepping the pilot: a
+    // staged screenshot never runs the loop, so the mesh would otherwise
+    // sit at the origin. Same two lines step() paints every frame.
+    pose() {
+      mesh.group.position.copy(state.pos);
+      mesh.group.quaternion.setFromEuler(new THREE.Euler(state.pitch, state.heading, state.roll, 'YXZ'));
+    },
     damage(amount) {
       if (!state.alive) return false;
       state.health -= amount;

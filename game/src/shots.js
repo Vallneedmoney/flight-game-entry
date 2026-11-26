@@ -31,9 +31,11 @@ export function stageShot(name, world, renderer, hud, combat) {
     return { screen: 'title', best: 0 };
   }
   if (name === 'play') {
-    // Mid-dogfight over the sea: the player is on a bandit's tail, the
-    // gun is firing, a second bandit breaks away and one more burns in
-    // the distance. Burner lit, lock solid, HUD alive.
+    // Mid-dogfight over the archipelago: the player is on a bandit's tail,
+    // the bandit close enough to fill the lock diamond, the smoking
+    // volcano on the left horizon, the green island on the right, and the
+    // home island below. A second bandit breaks away to the right and one
+    // more burns in the distance. Burner lit, lock solid, HUD alive.
     world.reset(false);
     s.wave = 2;
     s.kills = 2;
@@ -45,11 +47,18 @@ export function stageShot(name, world, renderer, hud, combat) {
     const bandit = world.enemies[0];
     const wingman = world.enemies[1];
     if (bandit) {
-      bandit.state.pos.set(180, 190, -260);
-      bandit.state.heading = Math.PI * 0.75;
+      // ~130 m ahead, crossing left across the nose and banked, so the
+      // bandit's wings and top show instead of a dead-astern speck: the
+      // silhouette fills the 44 px lock diamond.
+      bandit.state.pos.set(267, 178, 374);
+      bandit.state.heading = 1.06;
+      bandit.state.roll = 0.8;
       bandit.state.speed = 160;
       bandit.state.health = 7;
-      s.pos.set(20, 165, -80);
+      // Flying ~15 deg west of north from south-east of the map: the
+      // smoking volcano sits ~30 deg left of the nose on the horizon and
+      // the green island ~29 deg right, with the home island's sea below.
+      s.pos.set(300, 170, 500);
       s.heading = headingToward(s.pos, bandit.state.pos);
       s.pitch = -0.04;
       s.roll = -0.5;
@@ -84,14 +93,20 @@ export function stageShot(name, world, renderer, hud, combat) {
           z: s.pos.z - dir.z * (30 + i * 14),
         });
       }
+      // The mesh only follows the state in step(), which a staged shot
+      // never runs: pose it here or the bandit stays at the origin.
+      bandit.pose();
     }
     if (wingman) {
-      wingman.state.pos.set(-260, 240, -420);
-      wingman.state.heading = Math.PI * 0.3;
+      // Breaking away to the right, ~21 deg east of north and in frame.
+      wingman.state.pos.set(385, 190, 265);
+      wingman.state.heading = 0.9;
+      wingman.state.roll = -0.6;
       wingman.state.speed = 170;
+      wingman.pose();
     }
-    // A bandit that just blew up, burning off to the right.
-    combat.stageExplosion({ x: 420, y: 210, z: -480 }, 0.45);
+    // A bandit that just blew up, burning to the right of the nose.
+    combat.stageExplosion({ x: 434, y: 195, z: 232 }, 0.45);
     s.message = '';
     renderer.setCameraMode('chase');
     return { screen: 'play', best: 0 };
